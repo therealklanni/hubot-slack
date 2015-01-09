@@ -1,241 +1,245 @@
-{Robot, Adapter, TextMessage} = require 'hubot'
-https = require 'https'
+{Robot, Adapter, EnterMessage, LeaveMessage, TopicMessage} = require 'hubot'
+{SlackTextMessage, SlackRawMessage, SlackBotMessage} = require './message'
+{SlackRawListener, SlackBotListener} = require './listener'
 
-class Slack extends Adapter
+SlackClient = require 'slack-client'
+Util = require 'util'
+
+class SlackBot extends Adapter
+  @MAX_MESSAGE_LENGTH: 4000
+
   constructor: (robot) ->
-    super robot
-    @channelMapping = {}
+    @robot = robot
 
-
-  ###################################################################
-  # Slightly abstract logging, primarily so that it can
-  # be easily altered for unit tests.
-  ###################################################################
-  log: console.log.bind console
-  logError: console.error.bind console
-
-
-  ###################################################################
-  # Communicating back to the chat rooms. These are exposed
-  # as methods on the argument passed to callbacks from
-  # robot.respond, robot.listen, etc.
-  ###################################################################
-  send: (envelope, strings...) ->
-    @log "Sending message"
-    channel = envelope.reply_to || @channelMapping[envelope.room] || envelope.room
-
-    strings.forEach (str) =>
-      str = @escapeHtml str
-      args = JSON.stringify
-        username   : @robot.name
-        channel    : channel
-        text       : str
-        link_names : @options.link_names if @options?.link_names?
-
-      @post "/services/hooks/hubot", args
-
-  reply: (envelope, strings...) ->
-    @log "Sending reply"
-
-    user_name = envelope.user?.name || envelope?.name
-
-    strings.forEach (str) =>
-      @send envelope, "#{user_name}: #{str}"
-
-  topic: (params, strings...) ->
-    # TODO: Set the topic
-
-
-  custom: (message, data)->
-    @log "Sending custom message"
-
-    channel = message.reply_to || @channelMapping[message.room] || message.room
-
-    attachment =
-      text     : @escapeHtml data.text
-      fallback : @escapeHtml data.fallback
-      pretext  : @escapeHtml data.pretext
-      color    : data.color
-      fields   : data.fields
-    args = JSON.stringify
-      username    : @robot.name
-      channel     : channel
-      attachments : [attachment]
-      link_names  : @options.link_names if @options?.link_names?
-    @post "/services/hooks/hubot", args
-  ###################################################################
-  # HTML helpers.
-  ###################################################################
-  escapeHtml: (string) ->
-    string
-      # Escape entities
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-
-      # Linkify. We assume that the bot is well-behaved and
-      # consistently sending links with the protocol part
-      .replace(/((\bhttp)\S+)/g, '<$1>')
-
-  unescapeHtml: (string) ->
-    string
-      # Unescape entities
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-
-      # Convert markup into plain url string.
-      .replace(/<((\bhttps?)[^|]+)(\|(.*))+>/g, '$1')
-      .replace(/<((\bhttps?)(.*))?>/g, '$1')
-
-
-  ###################################################################
-  # Parsing inputs.
-  ###################################################################
-
-  parseOptions: ->
-    @options =
-      token : process.env.HUBOT_SLACK_TOKEN
-      team  : process.env.HUBOT_SLACK_TEAM
-      name  : process.env.HUBOT_SLACK_BOTNAME or 'slackbot'
-      mode  : process.env.HUBOT_SLACK_CHANNELMODE or 'blacklist'
-      channels: process.env.HUBOT_SLACK_CHANNELS?.split(',') or []
-      link_names: process.env.HUBOT_SLACK_LINK_NAMES or 0
-
-  getMessageFromRequest: (req) ->
-    # Parse the payload
-    hubotMsg = req.param 'text'
-    room = req.param 'channel_name'
-    mode = @options.mode
-    channels = @options.channels
-
-    @unescapeHtml hubotMsg if hubotMsg and (mode is 'blacklist' and room not in channels or mode is 'whitelist' and room in channels)
-
-  getAuthorFromRequest: (req) ->
-    # Return an author object
-    id       : req.param 'user_id'
-    name     : req.param 'user_name'
-    reply_to : req.param 'channel_id'
-    room     : req.param 'channel_name'
-
-  userFromParams: (params) ->
-    # hubot < 2.4.2: params = user
-    # hubot >= 2.4.2: params = {user: user, ...}
-    user = {}
-    if params.user
-      user = params.user
-    else
-      user = params
-
-    if user.room and not user.reply_to
-      user.reply_to = user.room
-
-    user
-  ###################################################################
-  # The star.
-  ###################################################################
   run: ->
-    self = @
-    @parseOptions()
+    # Take our options from the environment, and set otherwise suitable defaults
+    options =
+      token: process.env.HUBOT_SLACK_TOKEN
+      autoReconnect: true
+      autoMark: true
 
-    @log "Slack adapter options:", @options
+    return @robot.logger.error "No services token provided to Hubot" unless options.token
+    return @robot.logger.error "v2 services token provided, please follow the upgrade instructions" unless (options.token.substring(0, 5) == 'xoxb-')
 
-    return @logError "No services token provided to Hubot" unless @options.token
-    return @logError "No team provided to Hubot" unless @options.team
+    @options = options
 
-    @robot.on 'slack-attachment', (payload)=>
-      @custom(payload.message, payload.content)
+    # Create our slack client object
+    @client = new SlackClient options.token, options.autoReconnect, options.autoMark
 
-    # Listen to incoming webhooks from slack
-    self.robot.router.post "/hubot/slack-webhook", (req, res) ->
-      self.log "Incoming message received"
+    # Setup event handlers
+    # TODO: Handle eventual events at (re-)connection time for unreads and provide a config for whether we want to process them
+    @client.on 'error', @.error
+    @client.on 'loggedIn', @.loggedIn
+    @client.on 'open', @.open
+    @client.on 'close', @.clientClose
+    @client.on 'message', @.message
+    @client.on 'userChange', @.userChange
+    @robot.brain.on 'loaded', @.brainLoaded
 
-      hubotMsg = self.getMessageFromRequest req
-      author = self.getAuthorFromRequest req
-      author = self.robot.brain.userForId author.id, author
-      author.room = req.param 'channel_name'
-      self.channelMapping[req.param 'channel_name'] = req.param 'channel_id'
+    # Start logging in
+    @client.login()
 
-      if hubotMsg and author
-        # Pass to the robot
-        self.receive new TextMessage(author, hubotMsg)
+  error: (error) =>
+    @robot.logger.error "Received error #{error.toString()}"
+    @robot.logger.error error.stack
+    @robot.logger.error "Exiting in 1 second"
+    setTimeout process.exit.bind(process, 1), 1000
 
-      # Just send back an empty reply, since our actual reply,
-      # if any, will be async above
-      res.end ""
+  loggedIn: (self, team) =>
+    @robot.logger.info "Logged in as #{self.name} of #{team.name}, but not yet connected"
+
+    # store a copy of our own user data
+    @self = self
 
     # Provide our name to Hubot
-    self.robot.name = @options.name
+    @robot.name = self.name
+
+    for id, user of @client.users
+      @userChange user
+
+  brainLoaded: =>
+    # once the brain has loaded, reload all the users from the client
+    for id, user of @client.users
+      @userChange user
+
+    # also wipe out any broken users stored under usernames instead of ids
+    for id, user of @robot.brain.data.users
+      if id is user.name then delete @robot.brain.data.users[user.id]
+
+  userChange: (user) =>
+    newUser = {name: user.name, email_address: user.profile.email}
+    if user.id of @robot.brain.data.users
+      for key, value of @robot.brain.data.users[user.id]
+        unless key of newUser
+          newUser[key] = value
+    delete @robot.brain.data.users[user.id]
+    @robot.brain.userForId user.id, newUser
+
+  open: =>
+    @robot.logger.info 'Slack client now connected'
 
     # Tell Hubot we're connected so it can load scripts
-    @log "Successfully 'connected' as", self.robot.name
-    self.emit "connected"
+    @emit "connected"
 
+  clientClose: =>
+    @robot.logger.info 'Slack client closed'
+    @client.removeListener 'error', @.error
+    @client.removeListener 'loggedIn', @.loggedIn
+    @client.removeListener 'open', @.open
+    @client.removeListener 'close', @.clientClose
+    @client.removeListener 'message', @.message
+    process.exit 0
 
-  ###################################################################
-  # Convenience HTTP Methods for sending data back to slack.
-  ###################################################################
-  get: (path, callback) ->
-    @request "GET", path, null, callback
+  message: (msg) =>
+    # Ignore our own messages
+    return if msg.user == @self.id
 
-  post: (path, body, callback) ->
-    @request "POST", path, body, callback
+    channel = @client.getChannelGroupOrDMByID msg.channel if msg.channel
 
-  request: (method, path, body, callback) ->
-    self = @
+    if msg.hidden or (not msg.text and not msg.attachments) or msg.subtype is 'bot_message' or not msg.user or not channel
+      # use a raw message, so scripts that care can still see these things
 
-    host = "#{@options.team}.slack.com"
-    headers =
-      Host: host
+      if msg.user
+        user = @robot.brain.userForId msg.user
+      else
+        # We need to fake a user because, at the very least, CatchAllMessage
+        # expects it to be there.
+        user = {}
+        user.name = msg.username if msg.username?
+      user.room = channel.name if channel
 
-    path += "?token=#{@options.token}"
+      rawText = msg.getBody()
+      text = @removeFormatting rawText
 
-    reqOptions =
-      agent    : false
-      hostname : host
-      port     : 443
-      path     : path
-      method   : method
-      headers  : headers
+      if msg.subtype is 'bot_message'
+        @robot.logger.debug "Received bot message: '#{text}' in channel: #{channel?.name}, from: #{user?.name}"
+        @receive new SlackBotMessage user, text, rawText, msg
+      else
+        @robot.logger.debug "Received raw message (subtype: #{msg.subtype})"
+        @receive new SlackRawMessage user, text, rawText, msg
+      return
 
-    if method is "POST"
-      body = new Buffer body
-      reqOptions.headers["Content-Type"] = "application/x-www-form-urlencoded"
-      reqOptions.headers["Content-Length"] = body.length
+    # Process the user into a full hubot user
+    user = @robot.brain.userForId msg.user
+    user.room = channel.name
 
-    request = https.request reqOptions, (response) ->
-      data = ""
-      response.on "data", (chunk) ->
-        data += chunk
+    # Test for enter/leave messages
+    if msg.subtype is 'channel_join' or msg.subtype is 'group_join'
+      @robot.logger.debug "#{user.name} has joined #{channel.name}"
+      @receive new EnterMessage user
 
-      response.on "end", ->
-        if response.statusCode >= 400
-          self.logError "Slack services error: #{response.statusCode}"
-          self.logError data
+    else if msg.subtype is 'channel_leave' or msg.subtype is 'group_leave'
+      @robot.logger.debug "#{user.name} has left #{channel.name}"
+      @receive new LeaveMessage user
 
-        #console.log "HTTPS response:", data
-        callback? null, data
+    else if msg.subtype is 'channel_topic' or msg.subtype is 'group_topic'
+      @robot.logger.debug "#{user.name} set the topic in #{channel.name} to #{msg.topic}"
+      @receive new TopicMessage user, msg.topic, msg.ts
 
-        response.on "error", (err) ->
-          self.logError "HTTPS response error:", err
-          callback? err, null
-
-    if method is "POST"
-      request.end body, "binary"
     else
-      request.end()
+      # Build message text to respond to, including all attachments
+      rawText = msg.getBody()
+      text = @removeFormatting rawText
 
-    request.on "error", (err) ->
-      self.logError "HTTPS request error:", err
-      self.logError err.stack
-      callback? err
+      @robot.logger.debug "Received message: '#{text}' in channel: #{channel.name}, from: #{user.name}"
 
+      # If this is a DM, pretend it was addressed to us
+      if msg.getChannelType() == 'DM'
+        text = "#{@robot.name} #{text}"
 
-###################################################################
-# Exports to handle actual usage and unit testing.
-###################################################################
-exports.use = (robot) ->
-  new Slack robot
+      @receive new SlackTextMessage user, text, rawText, msg
 
-# Export class for unit tests
-exports.Slack = Slack
+  removeFormatting: (text) ->
+    # https://api.slack.com/docs/formatting
+    text = text.replace ///
+      <              # opening angle bracket
+      ([@#!])?       # link type
+      ([^>|]+)       # link
+      (?:\|          # start of |label (optional)
+        ([^>]+)      # label
+      )?             # end of label
+      >              # closing angle bracket
+    ///g, (m, type, link, label) =>
+
+      switch type
+
+        when '@'
+          if label then return label
+          user = @client.getUserByID link
+          if user
+            return "@#{user.name}"
+
+        when '#'
+          if label then return label
+          channel = @client.getChannelByID link
+          if channel
+            return "\##{channel.name}"
+
+        when '!'
+          if link in ['channel','group','everyone']
+            return "@#{link}"
+
+        else
+          link = link.replace /^mailto:/, ''
+          if label and -1 == link.indexOf label
+            "#{label} (#{link})"
+          else
+            link
+    text = text.replace /&lt;/g, '<'
+    text = text.replace /&gt;/g, '>'
+    text = text.replace /&amp;/g, '&'
+    text
+
+  send: (envelope, messages...) ->
+    channel = @client.getChannelGroupOrDMByName envelope.room
+
+    for msg in messages
+      @robot.logger.debug "Sending to #{envelope.room}: #{msg}"
+
+      if msg.length <= SlackBot.MAX_MESSAGE_LENGTH
+        channel.send msg
+
+      # If message is greater than MAX_MESSAGE_LENGTH, split it into multiple messages
+      else
+        submessages = []
+
+        while msg.length > 0
+          if msg.length <= SlackBot.MAX_MESSAGE_LENGTH
+            submessages.push msg
+            msg = ''
+
+          else
+            # Split message at last line break, if it exists
+            maxSizeChunk = msg.substring(0, SlackBot.MAX_MESSAGE_LENGTH)
+
+            lastLineBreak = maxSizeChunk.lastIndexOf('\n')
+            lastWordBreak = maxSizeChunk.match(/\W\w+$/)?.index
+
+            breakIndex = if lastLineBreak > -1
+              lastLineBreak
+            else if lastWordBreak
+              lastWordBreak
+            else
+              SlackBot.MAX_MESSAGE_LENGTH
+
+            submessages.push msg.substring(0, breakIndex)
+
+            # Skip char if split on line or word break
+            breakIndex++ if breakIndex isnt SlackBot.MAX_MESSAGE_LENGTH
+
+            msg = msg.substring(breakIndex, msg.length)
+
+        channel.send m for m in submessages
+
+  reply: (envelope, messages...) ->
+    @robot.logger.debug "Sending reply"
+
+    for msg in messages
+      # TODO: Don't prefix username if replying in DM
+      @send envelope, "#{envelope.user.name}: #{msg}"
+
+  topic: (envelope, strings...) ->
+    channel = @client.getChannelGroupOrDMByName envelope.room
+    channel.setTopic strings.join "\n"
+
+module.exports = SlackBot

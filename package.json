@@ -1,6 +1,6 @@
 {
   "name": "hubot-slack",
-  "version": "2.1.0",
+  "version": "3.2.1",
   "author": {
     "name": "Tiny Speck",
     "url": "https://www.tinyspeck.com/"
@@ -43,11 +43,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "http://github.com/tinyspeck/hubot-slack.git"
+    "url": "http://github.com/slackhq/hubot-slack.git"
   },
   "bugs": {
-    "url": "https://github.com/tinyspeck/hubot-slack/issues",
-    "email": "help@tinyspeck.com"
+    "url": "https://github.com/slackhq/hubot-slack/issues",
+    "email": "feedback@tinyspeck.com"
   },
   "devDependencies": {
     "coffee-script": "~1.7.1",
@@ -55,15 +55,18 @@
     "grunt-release": "~0.6.0",
     "should": "~2.0.2",
     "mocha": "~1.13.0",
-    "hubot": "~2.6.4",
     "grunt-contrib-watch": "~0.5.3",
-    "grunt-shell": "~0.5.0"
+    "grunt-shell": "~0.5.0",
+    "hubot": "~2.11"
   },
-  "main": "./src/slack",
+  "main": "./index",
   "engines": {
     "node": ">=0.4.7"
   },
   "scripts": {
     "test": "mocha --compilers coffee:coffee-script/register --reporter spec"
+  },
+  "dependencies": {
+    "slack-client": "~1.2.0"
   }
 }
