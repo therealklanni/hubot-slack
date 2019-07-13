@@ -37,7 +37,7 @@ class SlackFormatter
           if label then return "@#{label}"
           user = @dataStore.getUserById link
           if user
-            return "@#{user.name}"
+            return "@#{user.slack.profile.display_name}"
 
         when '#'
           if label then return "\##{label}"
