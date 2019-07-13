@@ -7,7 +7,7 @@ SlackClient = require '../src/client'
 {EventEmitter} = require 'events'
 { SlackTextMessage } = require '../src/message'
 # Use Hubot's brain in our stubs
-{Brain, Robot} = require 'hubot'
+{Brain, Robot} = require '@therealklanni/hubot'
 _ = require 'lodash'
 require '../src/extensions'
 
