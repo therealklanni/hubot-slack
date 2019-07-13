@@ -167,7 +167,7 @@ class SlackBot extends Adapter
           if label then return label
           user = @client.getUserByID link
           if user
-            return "@#{user.name}"
+            return "@#{user.slack.profile.display_name}"
 
         when '#'
           if label then return label
