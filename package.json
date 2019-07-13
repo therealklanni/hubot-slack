@@ -1,5 +1,5 @@
 {
-  "name": "hubot-slack",
+  "name": "@therealklanni/hubot-slack",
   "version": "6.0.0",
   "description": "A Slack adapter for hubot",
   "main": "./slack",
