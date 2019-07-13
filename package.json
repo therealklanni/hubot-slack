@@ -1,6 +1,6 @@
 {
   "name": "@therealklanni/hubot-slack",
-  "version": "6.0.1",
+  "version": "6.0.2",
   "description": "A Slack adapter for hubot",
   "main": "./slack",
   "scripts": {
@@ -32,11 +32,11 @@
     "hubot": ">= 2.0.0"
   },
   "devDependencies": {
+    "@therealklanni/hubot": "^3.4.0",
     "chai": "^3.5.0",
     "codecov": "^3.2.0",
     "coffee-coverage": "^2.0.0",
     "coffeescript": "^1.12.7",
-    "hubot": ">= 2.19.0",
     "istanbul": "^0.4.3",
     "mocha": "^4.1.0",
     "mockery": "^2.1.0",
