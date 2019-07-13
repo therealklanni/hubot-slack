@@ -1,4 +1,4 @@
-{Message, TextMessage}  = require.main.require "hubot"
+{Message, TextMessage}  = require.main.require "@therealklanni/hubot"
 SlackClient             = require "./client"
 SlackMention            = require "./mention"
 Promise                 = require "bluebird"
@@ -20,7 +20,7 @@ class ReactionMessage extends Message
   constructor: (@type, @user, @reaction, @item_user, @item, @event_ts) ->
     super @user
     @type = @type.replace("reaction_", "")
-    
+
 class FileSharedMessage extends Message
 
   ###*

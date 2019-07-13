@@ -1,9 +1,9 @@
-{Robot}           = require.main.require "hubot"
+{Robot}           = require.main.require "@therealklanni/hubot"
 {ReactionMessage, PresenceMessage, FileSharedMessage} = require "./message"
 
 # Requires the es2015 version of Hubot for v3 or higher so the correct prototype is updated
 if Robot.name == "CoffeeScriptCompatibleClass"
-  {Robot} = require.main.require "hubot/es2015"
+  {Robot} = require.main.require "@therealklanni/hubot/es2015"
 
 ###*
 # Adds a Listener for ReactionMessages with the provided matcher, options, and callback
@@ -70,7 +70,7 @@ Robot::presenceChange = (matcher, options, callback) ->
     options = matcher
 
   @listen matchPresence, options, callback
-  
+
 ###*
 # Adds a Listener for FileSharedMessages with the provided matcher, options, and callback
 #
