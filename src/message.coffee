@@ -203,7 +203,7 @@ class SlackTextMessage extends TextMessage
     client.fetchUser(id)
       .then (res) =>
         mentions.push(new SlackMention(res.id, "user", res))
-        return "@#{res.slack.profile.display_name}"
+        return "@#{res.slack.profile.display_name || res.name}"
       .catch (error) =>
         client.robot.logger.error "Error getting user info #{id}: #{error.message}"
         return "<@#{id}>"
